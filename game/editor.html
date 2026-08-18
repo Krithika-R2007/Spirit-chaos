@@ -1,0 +1,528 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Map Editor</title>
+<link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#1a1a2e; color:#fff; font-family:'VT323',monospace; font-size:16px; display:flex; flex-direction:column; height:100vh; overflow:hidden; }
+
+#toolbar { background:#0f0f1a; border-bottom:2px solid #FFD700; padding:5px 8px; display:flex; align-items:center; gap:8px; flex-shrink:0; flex-wrap:wrap; }
+#toolbar h1 { color:#FFD700; font-size:20px; }
+button { background:#000080; color:#FFD700; border:2px solid #FFD700; font-family:'VT323',monospace; font-size:15px; padding:2px 8px; cursor:pointer; }
+button:hover, button.active { background:#FFD700; color:#000080; }
+select { background:#000080; color:#FFD700; border:2px solid #FFD700; font-family:'VT323',monospace; font-size:15px; padding:2px 5px; }
+#coords { color:#00ffcc; font-size:14px; min-width:110px; }
+#status { color:#ff9900; font-size:14px; flex:1; }
+
+#main { display:flex; flex:1; overflow:hidden; }
+
+/* LEFT: tileset + objects panel */
+#leftPanel { width:200px; background:#0f0f1a; border-right:2px solid #333; display:flex; flex-direction:column; flex-shrink:0; overflow:hidden; }
+.panelTab { display:flex; border-bottom:1px solid #333; }
+.panelTab button { flex:1; border:none; border-right:1px solid #333; border-radius:0; font-size:14px; padding:4px; }
+#tilesetScroll { flex:1; overflow:auto; padding:3px; display:none; }
+#objectsScroll { flex:1; overflow:auto; padding:4px; display:none; }
+#tilesetCanvas { cursor:crosshair; display:block; image-rendering:pixelated; }
+.objBtn { display:flex; align-items:center; gap:6px; width:100%; background:none; border:1px solid #333; border-radius:0; color:#ccc; font-size:13px; padding:3px 5px; margin-bottom:2px; cursor:pointer; text-align:left; }
+.objBtn:hover, .objBtn.active { background:#000080; color:#FFD700; border-color:#FFD700; }
+.objBtn img { width:28px; height:28px; image-rendering:pixelated; object-fit:contain; background:#222; }
+#selectedInfo { padding:4px 6px; font-size:13px; color:#00ffcc; border-top:1px solid #333; min-height:36px; }
+
+/* CENTRE: map canvas */
+#canvasWrap { flex:1; overflow:auto; background:#111; }
+#mapCanvas { cursor:crosshair; display:block; image-rendering:pixelated; }
+
+/* RIGHT: layers + object list */
+#rightPanel { width:160px; background:#0f0f1a; border-left:2px solid #333; display:flex; flex-direction:column; flex-shrink:0; overflow:hidden; }
+#rightPanel h2 { color:#FFD700; font-size:16px; padding:5px 7px; border-bottom:1px solid #333; }
+.layerBtn { display:block; width:100%; text-align:left; padding:5px 8px; background:none; border:none; border-bottom:1px solid #222; color:#aaa; font-family:'VT323',monospace; font-size:15px; cursor:pointer; }
+.layerBtn:hover { color:#fff; }
+.layerBtn.active { color:#FFD700; background:#000080; }
+#objList { flex:1; overflow-y:auto; padding:4px; }
+.objListItem { font-size:12px; color:#aaa; padding:2px 4px; border-bottom:1px solid #222; cursor:pointer; display:flex; justify-content:space-between; align-items:center; }
+.objListItem:hover { background:#1a1a3e; color:#fff; }
+.objListItem.selected { background:#000080; color:#FFD700; }
+.delBtn { color:#ff4444; background:none; border:none; cursor:pointer; font-size:14px; padding:0 2px; }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <h1>MAP EDITOR</h1>
+  <select id="mapSelect">
+    <option value="maps/default_map.json">default_map</option>
+    <option value="maps/new_tile.json">new_tile</option>
+  </select>
+  <button id="loadBtn">LOAD</button>
+  <button id="saveBtn">SAVE</button>
+  <button id="fillBtn">FILL</button>
+  <button id="clearBtn">CLEAR</button>
+  <label style="color:#aaa;font-size:14px">Zoom:</label>
+  <select id="zoomSelect">
+    <option value="1">1x</option>
+    <option value="2" selected>2x</option>
+    <option value="3">3x</option>
+    <option value="4">4x</option>
+  </select>
+  <button id="addColBtn">+COL</button>
+  <button id="addRowBtn">+ROW</button>
+  <label style="color:#aaa;font-size:13px"><input type="checkbox" id="showCollisions" checked> Walls</label>
+  <label style="color:#aaa;font-size:13px"><input type="checkbox" id="showObjects" checked> Objects</label>
+  <span id="coords">x:0 y:0</span>
+  <span id="status"></span>
+</div>
+
+<div id="main">
+  <!-- LEFT PANEL -->
+  <div id="leftPanel">
+    <div class="panelTab">
+      <button id="tabTiles" class="active" onclick="switchTab('tiles')">TILES</button>
+      <button id="tabObjects" onclick="switchTab('objects')">OBJECTS</button>
+    </div>
+    <div id="tilesetScroll" style="display:block">
+      <canvas id="tilesetCanvas"></canvas>
+    </div>
+    <div id="objectsScroll">
+      <!-- populated by JS -->
+    </div>
+    <div id="selectedInfo">Click a tile or object</div>
+  </div>
+
+  <!-- MAP -->
+  <div id="canvasWrap">
+    <canvas id="mapCanvas"></canvas>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div id="rightPanel">
+    <h2>LAYERS</h2>
+    <button class="layerBtn active" data-layer="floor">🟫 Floor</button>
+    <button class="layerBtn" data-layer="furniture">🪑 Furniture</button>
+    <button class="layerBtn" data-layer="objects">📦 Objects</button>
+    <button class="layerBtn" data-layer="collision" style="color:#ff6666">🧱 Walls</button>
+    <h2 style="margin-top:6px">TOOLS</h2>
+    <button class="layerBtn" id="toolPaint" style="color:#00ff88">✏ Paint</button>
+    <button class="layerBtn" id="toolErase" style="color:#ff6666">✕ Erase</button>
+    <button class="layerBtn" id="toolSelect" style="color:#88aaff">↖ Select</button>
+    <h2 style="margin-top:6px; font-size:13px">PLACED OBJECTS</h2>
+    <div id="objList"></div>
+  </div>
+</div>
+
+<script>
+const TILE = 16
+let zoom = 2
+let mapData = null
+let tilesetImg = null
+let tilesetCols = 0
+let selectedTile = 1
+let activeLayer = 'floor'
+let tool = 'paint'
+let isPainting = false
+let collisionStart = null
+let selectedObjKey = null   // key of object type selected in left panel
+let selectedObjIndex = -1   // index in mapData.objects array
+let dragObj = null           // object being dragged
+let activeTab = 'tiles'
+
+// All available objects from your assets
+const OBJECT_DEFS = [
+  // Bedroom
+  { key:'bed',       label:'Queen Bed',   src:'bedroom/queenbed.png',  w:48, h:48 },
+  { key:'twobed',    label:'Small Bed',   src:'bedroom/twobed.png',    w:40, h:40 },
+  { key:'chair',     label:'Chair',       src:'bedroom/chair.png',     w:32, h:32 },
+  { key:'chairL',    label:'Chair Left',  src:'bedroom/chairleft.png', w:32, h:32 },
+  { key:'chairR',    label:'Chair Right', src:'bedroom/chairright.png',w:32, h:32 },
+  { key:'desk',      label:'Desk',        src:'bedroom/desk.png',      w:48, h:32 },
+  { key:'lamp',      label:'Lamp',        src:'bedroom/lamp.png',      w:24, h:40 },
+  { key:'mirror',    label:'Mirror',      src:'bedroom/mirror.png',    w:32, h:48 },
+  { key:'doll',      label:'Doll',        src:'bedroom/doll.png',      w:24, h:32 },
+  // Kitchen
+  { key:'food',      label:'Food',        src:'kitchen/food.png',      w:32, h:32 },
+  { key:'grape',     label:'Grape',       src:'kitchen/grape.png',     w:24, h:24 },
+  { key:'lemon',     label:'Lemon',       src:'kitchen/lemon.png',     w:24, h:24 },
+  { key:'strawberry',label:'Strawberry',  src:'kitchen/strawberry.png',w:24, h:24 },
+  // Random
+  { key:'flower',    label:'Flower',      src:'random/flower.png',     w:24, h:32 },
+  { key:'guitar',    label:'Guitar',      src:'random/guitar.png',     w:24, h:40 },
+  { key:'harp',      label:'Harp',        src:'random/harp.png',       w:32, h:48 },
+  { key:'piano',     label:'Piano',       src:'random/piano.png',      w:48, h:32 },
+  { key:'plants',    label:'Plants',      src:'random/plants.png',     w:32, h:40 },
+  { key:'music',     label:'Music Note',  src:'random/music.png',      w:24, h:24 },
+  // Spirits (as decorations)
+  { key:'poppy_h',   label:'Poppy',       src:'spirits/poppy_h.png',   w:40, h:40 },
+  { key:'citrus_h',  label:'Citrus',      src:'spirits/citrus_h.png',  w:40, h:40 },
+  { key:'melody_h',  label:'Melody',      src:'spirits/melody_h.png',  w:40, h:40 },
+  // Player
+  { key:'lia',       label:'Lia',         src:'sprites/lia_stand.png', w:32, h:48 },
+]
+
+// Preload all object images
+const objImages = {}
+OBJECT_DEFS.forEach(def => {
+  const img = new Image()
+  img.src = def.src
+  objImages[def.key] = img
+})
+
+const mapCanvas = document.getElementById('mapCanvas')
+const mapCtx = mapCanvas.getContext('2d')
+const tsCanvas = document.getElementById('tilesetCanvas')
+const tsCtx = tsCanvas.getContext('2d')
+const coordsEl = document.getElementById('coords')
+const statusEl = document.getElementById('status')
+const selectedInfoEl = document.getElementById('selectedInfo')
+
+function setStatus(msg, color='#00ffcc') {
+  statusEl.textContent = msg
+  statusEl.style.color = color
+  if (msg) setTimeout(()=>{ if(statusEl.textContent===msg) statusEl.textContent='' }, 3000)
+}
+
+function switchTab(tab) {
+  activeTab = tab
+  document.getElementById('tilesetScroll').style.display = tab==='tiles' ? 'block' : 'none'
+  document.getElementById('objectsScroll').style.display = tab==='objects' ? 'block' : 'none'
+  document.getElementById('tabTiles').classList.toggle('active', tab==='tiles')
+  document.getElementById('tabObjects').classList.toggle('active', tab==='objects')
+  if (tab==='objects') {
+    activeLayer = 'objects'
+    document.querySelectorAll('[data-layer]').forEach(b=>b.classList.remove('active'))
+    document.querySelector('[data-layer="objects"]').classList.add('active')
+  }
+}
+
+// ── BUILD OBJECT PANEL ───────────────────────────────────────────────────────
+function buildObjectPanel() {
+  const scroll = document.getElementById('objectsScroll')
+  scroll.innerHTML = ''
+  OBJECT_DEFS.forEach(def => {
+    const btn = document.createElement('button')
+    btn.className = 'objBtn'
+    btn.dataset.key = def.key
+    const img = document.createElement('img')
+    img.src = def.src
+    const span = document.createElement('span')
+    span.textContent = def.label
+    btn.appendChild(img)
+    btn.appendChild(span)
+    btn.onclick = () => {
+      selectedObjKey = def.key
+      document.querySelectorAll('.objBtn').forEach(b=>b.classList.remove('active'))
+      btn.classList.add('active')
+      selectedInfoEl.textContent = 'Place: ' + def.label
+      tool = 'paint'
+    }
+    scroll.appendChild(btn)
+  })
+}
+buildObjectPanel()
+
+// ── LOAD MAP ─────────────────────────────────────────────────────────────────
+async function loadMap() {
+  const url = document.getElementById('mapSelect').value
+  try {
+    const r = await fetch(url + '?t=' + Date.now())
+    mapData = await r.json()
+    if (!mapData.layers.furniture) mapData.layers.furniture = []
+    if (!mapData.objects) mapData.objects = []
+    // Pad furniture rows
+    while (mapData.layers.furniture.length < mapData.mapHeight)
+      mapData.layers.furniture.push(new Array(mapData.mapWidth).fill(0))
+
+    const tsUrl = mapData.tileset.replace('assets/', '') + '?t=' + Date.now()
+    tilesetImg = new Image()
+    tilesetImg.onload = () => {
+      tilesetCols = Math.floor(tilesetImg.width / TILE)
+      drawTileset()
+      drawMap()
+      refreshObjList()
+      setStatus('Loaded: ' + mapData.name)
+    }
+    tilesetImg.onerror = () => { tilesetImg.src = 'rooms/room1.png?t='+Date.now() }
+    tilesetImg.src = tsUrl
+  } catch(e) { setStatus('Load failed: '+e.message,'#ff4444') }
+}
+
+// ── DRAW TILESET ─────────────────────────────────────────────────────────────
+function drawTileset() {
+  if (!tilesetImg) return
+  const cols = tilesetCols
+  const rows = Math.ceil(tilesetImg.height / TILE)
+  tsCanvas.width  = cols * TILE * 2
+  tsCanvas.height = rows * TILE * 2
+  tsCtx.imageSmoothingEnabled = false
+  tsCtx.drawImage(tilesetImg, 0, 0, tsCanvas.width, tsCanvas.height)
+  tsCtx.strokeStyle='rgba(255,255,255,0.12)'; tsCtx.lineWidth=0.5
+  for(let c=0;c<=cols;c++){tsCtx.beginPath();tsCtx.moveTo(c*TILE*2,0);tsCtx.lineTo(c*TILE*2,tsCanvas.height);tsCtx.stroke()}
+  for(let r=0;r<=rows;r++){tsCtx.beginPath();tsCtx.moveTo(0,r*TILE*2);tsCtx.lineTo(tsCanvas.width,r*TILE*2);tsCtx.stroke()}
+  const sx=(selectedTile%cols)*TILE*2, sy=Math.floor(selectedTile/cols)*TILE*2
+  tsCtx.strokeStyle='#FFD700'; tsCtx.lineWidth=2
+  tsCtx.strokeRect(sx+1,sy+1,TILE*2-2,TILE*2-2)
+}
+
+// ── DRAW MAP ─────────────────────────────────────────────────────────────────
+function drawMap() {
+  if (!mapData) return
+  const W=mapData.mapWidth, H=mapData.mapHeight, Z=zoom
+  mapCanvas.width=W*TILE*Z; mapCanvas.height=H*TILE*Z
+  mapCtx.imageSmoothingEnabled=false
+  mapCtx.fillStyle='#1a1a1a'; mapCtx.fillRect(0,0,mapCanvas.width,mapCanvas.height)
+
+  drawTileLayer('floor')
+  drawTileLayer('furniture')
+
+  // Grid
+  mapCtx.strokeStyle='rgba(255,255,255,0.07)'; mapCtx.lineWidth=0.5
+  for(let c=0;c<=W;c++){mapCtx.beginPath();mapCtx.moveTo(c*TILE*Z,0);mapCtx.lineTo(c*TILE*Z,H*TILE*Z);mapCtx.stroke()}
+  for(let r=0;r<=H;r++){mapCtx.beginPath();mapCtx.moveTo(0,r*TILE*Z);mapCtx.lineTo(W*TILE*Z,r*TILE*Z);mapCtx.stroke()}
+
+  // Objects
+  if (document.getElementById('showObjects').checked) {
+    ;(mapData.objects||[]).forEach((obj,i) => {
+      const def = OBJECT_DEFS.find(d=>d.key===obj.key)
+      const img = objImages[obj.key]
+      if (img && img.complete) {
+        const dw = (def?def.w:32)*Z/16*TILE
+        const dh = (def?def.h:32)*Z/16*TILE
+        mapCtx.globalAlpha = i===selectedObjIndex ? 1 : 0.9
+        mapCtx.drawImage(img, obj.x*Z, obj.y*Z, dw, dh)
+        mapCtx.globalAlpha = 1
+        if (i===selectedObjIndex) {
+          mapCtx.strokeStyle='#FFD700'; mapCtx.lineWidth=2
+          mapCtx.strokeRect(obj.x*Z, obj.y*Z, dw, dh)
+        }
+      }
+    })
+  }
+
+  // Collisions
+  if (document.getElementById('showCollisions').checked) {
+    mapCtx.fillStyle='rgba(255,0,0,0.2)'; mapCtx.strokeStyle='#ff4444'; mapCtx.lineWidth=1
+    ;(mapData.collisions||[]).forEach(c=>{
+      mapCtx.fillRect(c.x*Z,c.y*Z,c.w*Z,c.h*Z)
+      mapCtx.strokeRect(c.x*Z,c.y*Z,c.w*Z,c.h*Z)
+    })
+  }
+}
+
+function drawTileLayer(name) {
+  const layer=mapData.layers[name]; if(!layer||!tilesetImg) return
+  const Z=zoom, cols=tilesetCols
+  layer.forEach((row,r)=>row.forEach((id,c)=>{
+    if(!id) return
+    const tx=(id%cols)*TILE, ty=Math.floor(id/cols)*TILE
+    mapCtx.drawImage(tilesetImg,tx,ty,TILE,TILE,c*TILE*Z,r*TILE*Z,TILE*Z,TILE*Z)
+  }))
+}
+
+// ── OBJECT LIST (right panel) ────────────────────────────────────────────────
+function refreshObjList() {
+  const list = document.getElementById('objList')
+  list.innerHTML = ''
+  ;(mapData.objects||[]).forEach((obj,i)=>{
+    const def = OBJECT_DEFS.find(d=>d.key===obj.key)
+    const row = document.createElement('div')
+    row.className = 'objListItem' + (i===selectedObjIndex?' selected':'')
+    row.innerHTML = `<span>${def?def.label:obj.key} (${obj.x},${obj.y})</span><button class="delBtn" title="Delete">✕</button>`
+    row.querySelector('.delBtn').onclick = (e)=>{ e.stopPropagation(); deleteObj(i) }
+    row.onclick = ()=>{ selectedObjIndex=i; drawMap(); refreshObjList() }
+    list.appendChild(row)
+  })
+}
+
+function deleteObj(i) {
+  mapData.objects.splice(i,1)
+  if(selectedObjIndex>=mapData.objects.length) selectedObjIndex=-1
+  drawMap(); refreshObjList()
+  setStatus('Object deleted')
+}
+
+// ── TILESET CLICK ────────────────────────────────────────────────────────────
+tsCanvas.addEventListener('click', e=>{
+  const rect=tsCanvas.getBoundingClientRect()
+  const col=Math.floor((e.clientX-rect.left)/(TILE*2))
+  const row=Math.floor((e.clientY-rect.top)/(TILE*2))
+  selectedTile=row*tilesetCols+col
+  selectedInfoEl.textContent='Tile: '+selectedTile
+  drawTileset()
+})
+
+// ── MAP INTERACTION ──────────────────────────────────────────────────────────
+function getMapPos(e) {
+  const rect=mapCanvas.getBoundingClientRect()
+  const px=(e.clientX-rect.left)/zoom
+  const py=(e.clientY-rect.top)/zoom
+  const col=Math.floor(px/TILE), row=Math.floor(py/TILE)
+  return { px, py, col, row }
+}
+
+function hitTestObjects(px, py) {
+  if (!mapData.objects) return -1
+  for (let i=mapData.objects.length-1; i>=0; i--) {
+    const obj=mapData.objects[i]
+    const def=OBJECT_DEFS.find(d=>d.key===obj.key)
+    const w=def?def.w:32, h=def?def.h:32
+    if (px>=obj.x && px<=obj.x+w && py>=obj.y && py<=obj.y+h) return i
+  }
+  return -1
+}
+
+mapCanvas.addEventListener('mousedown', e=>{
+  const {px,py,col,row}=getMapPos(e)
+
+  if (activeLayer==='collision') {
+    collisionStart={col,row}; return
+  }
+
+  if (activeLayer==='objects') {
+    if (tool==='select' || tool==='erase') {
+      const hit=hitTestObjects(px,py)
+      if (hit>=0) {
+        if (tool==='erase') { deleteObj(hit); return }
+        selectedObjIndex=hit
+        dragObj={ idx:hit, offX:px-mapData.objects[hit].x, offY:py-mapData.objects[hit].y }
+        drawMap(); refreshObjList()
+      }
+      return
+    }
+    // Paint = place object
+    if (selectedObjKey && tool==='paint') {
+      if (!mapData.objects) mapData.objects=[]
+      const def=OBJECT_DEFS.find(d=>d.key===selectedObjKey)
+      mapData.objects.push({ key:selectedObjKey, x:Math.round(px), y:Math.round(py), label:def?def.label:selectedObjKey })
+      selectedObjIndex=mapData.objects.length-1
+      drawMap(); refreshObjList()
+      setStatus('Placed: '+(def?def.label:selectedObjKey))
+    }
+    return
+  }
+
+  // Tile layers
+  isPainting=true
+  paintTile(col,row)
+})
+
+mapCanvas.addEventListener('mousemove', e=>{
+  const {px,py,col,row}=getMapPos(e)
+  coordsEl.textContent=`x:${col} y:${row}`
+
+  if (dragObj) {
+    const obj=mapData.objects[dragObj.idx]
+    obj.x=Math.round(px-dragObj.offX)
+    obj.y=Math.round(py-dragObj.offY)
+    drawMap()
+    return
+  }
+  if (isPainting) paintTile(col,row)
+})
+
+mapCanvas.addEventListener('mouseup', e=>{
+  const {px,py,col,row}=getMapPos(e)
+
+  if (dragObj) {
+    dragObj=null
+    refreshObjList()
+    setStatus('Object moved')
+    return
+  }
+
+  if (activeLayer==='collision' && collisionStart) {
+    const x1=Math.min(collisionStart.col,col), y1=Math.min(collisionStart.row,row)
+    const x2=Math.max(collisionStart.col,col), y2=Math.max(collisionStart.row,row)
+    if(!mapData.collisions) mapData.collisions=[]
+    mapData.collisions.push({ id:mapData.collisions.length, x:x1*TILE, y:y1*TILE, w:(x2-x1+1)*TILE, h:(y2-y1+1)*TILE })
+    collisionStart=null; drawMap()
+    setStatus('Wall added')
+    return
+  }
+  isPainting=false
+})
+
+mapCanvas.addEventListener('mouseleave',()=>{ isPainting=false; dragObj=null })
+
+function paintTile(col,row) {
+  if (!mapData||activeLayer==='objects'||activeLayer==='collision') return
+  const layer=mapData.layers[activeLayer]
+  if (!layer||!layer[row]||col<0||col>=mapData.mapWidth||row<0||row>=mapData.mapHeight) return
+  layer[row][col] = tool==='erase' ? 0 : selectedTile
+  drawMap()
+}
+
+// ── TOOLBAR ──────────────────────────────────────────────────────────────────
+document.getElementById('loadBtn').onclick=loadMap
+
+document.getElementById('saveBtn').onclick=()=>{
+  const json=JSON.stringify(mapData,null,2)
+  const blob=new Blob([json],{type:'application/json'})
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob)
+  a.download=mapData.name+'.json'; a.click()
+  setStatus('Downloaded! Drop it into assets/maps/ to replace')
+}
+
+document.getElementById('fillBtn').onclick=()=>{
+  if(!mapData||activeLayer==='objects'||activeLayer==='collision') return
+  mapData.layers[activeLayer].forEach(row=>row.fill(selectedTile))
+  drawMap(); setStatus('Filled with tile '+selectedTile)
+}
+
+document.getElementById('clearBtn').onclick=()=>{
+  if(!mapData) return
+  if(activeLayer==='objects'){ mapData.objects=[]; selectedObjIndex=-1; drawMap(); refreshObjList(); setStatus('Objects cleared'); return }
+  if(activeLayer==='collision'){ mapData.collisions=[]; drawMap(); setStatus('Walls cleared'); return }
+  mapData.layers[activeLayer].forEach(row=>row.fill(0))
+  drawMap(); setStatus('Layer cleared')
+}
+
+document.getElementById('addColBtn').onclick=()=>{
+  if(!mapData) return; mapData.mapWidth++
+  ;['floor','furniture'].forEach(l=>{ if(mapData.layers[l]) mapData.layers[l].forEach(r=>r.push(0)) })
+  drawMap()
+}
+document.getElementById('addRowBtn').onclick=()=>{
+  if(!mapData) return; mapData.mapHeight++
+  ;['floor','furniture'].forEach(l=>{ if(mapData.layers[l]) mapData.layers[l].push(new Array(mapData.mapWidth).fill(0)) })
+  drawMap()
+}
+
+document.getElementById('zoomSelect').onchange=e=>{ zoom=parseInt(e.target.value); drawMap() }
+document.getElementById('showCollisions').onchange=drawMap
+document.getElementById('showObjects').onchange=drawMap
+
+// Layer buttons
+document.querySelectorAll('[data-layer]').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    activeLayer=btn.dataset.layer
+    document.querySelectorAll('[data-layer]').forEach(b=>b.classList.remove('active'))
+    btn.classList.add('active')
+    if(activeLayer==='objects') switchTab('objects')
+    if(activeLayer==='collision') setStatus('Drag on map to draw a wall','#ff9900')
+  })
+})
+
+// Tool buttons
+document.getElementById('toolPaint').onclick=()=>setTool('paint')
+document.getElementById('toolErase').onclick=()=>setTool('erase')
+document.getElementById('toolSelect').onclick=()=>setTool('select')
+function setTool(t) {
+  tool=t
+  ;['toolPaint','toolErase','toolSelect'].forEach(id=>document.getElementById(id).classList.remove('active'))
+  document.getElementById('tool'+t.charAt(0).toUpperCase()+t.slice(1)).classList.add('active')
+}
+setTool('paint')
+
+// Keyboard shortcuts
+document.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT') return
+  if(e.key==='e'||e.key==='E') setTool('erase')
+  if(e.key==='p'||e.key==='P') setTool('paint')
+  if(e.key==='s'&&e.ctrlKey){ e.preventDefault(); document.getElementById('saveBtn').click() }
+  if(e.key==='Delete'&&selectedObjIndex>=0) deleteObj(selectedObjIndex)
+})
+
+loadMap()
+</script>
+</body>
+</html>
